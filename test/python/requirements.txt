@@ -1,0 +1,23 @@
+cloudpickle==1.3.0
+cvxopt==1.2.5
+cycler==0.10.0
+future==0.18.2
+gym==0.17.2
+-e git+https://github.com/ghzb/gym-TAIL.git@c5ca0e4b77540468365aca04b358e151b2d5acae#egg=gym_TAIL
+joblib==0.16.0
+kiwisolver==1.2.0
+matplotlib==3.2.2
+-e git+https://github.com/eriklindernoren/ML-From-Scratch.git@a2806c6732eee8d27762edd6d864e0c179d8e9e8#egg=mlfromscratch
+numpy==1.19.0
+pandas==1.0.5
+progressbar33==2.4
+pyglet==1.5.0
+pyparsing==2.4.7
+python-dateutil==2.8.1
+pytz==2020.1
+scikit-learn==0.23.1
+scipy==1.5.1
+six==1.15.0
+sklearn==0.0
+terminaltables==3.1.0
+threadpoolctl==2.1.0

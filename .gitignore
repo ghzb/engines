@@ -1,0 +1,18 @@
+#ignore everything
+*
+
+#allow directory traversal
+!*/
+
+#allow all gitignore files
+!**/.gitignore
+
+
+#allow folders
+!optimization/*
+!test/functional/*
+!test/optimization/*
+
+#ignore folders that got through.
+.idea/*
+out/*

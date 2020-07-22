@@ -1,0 +1,5 @@
+!agents/
+!requirements.txt
+!Test_*
+
+venv/
