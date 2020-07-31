@@ -2,6 +2,15 @@ import gym
 from gym_TAIL import *
 import numpy as np
 
+"""
+This file is a messy Python script I wrote while learning
+about OpenAI gym and Q-Learning. This test proves that learning
+can occur in TAIL by modifying a few lines of code from any existing
+RL scripts written in Python.
+"""
+
+
+env = gym.make('TAIL-v1')
 n_states = 20
 iter_max = 10000
 
@@ -11,7 +20,6 @@ gamma = 1.0
 t_max = 10000
 eps = 0.02
 
-env = gym.make('TAIL-v1')
 env.seed(0)
 np.random.seed(0)
 debug('-----q learning -----')

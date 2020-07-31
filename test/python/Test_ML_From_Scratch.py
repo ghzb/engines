@@ -8,6 +8,11 @@ from mlfromscratch.deep_learning.layers import Dense, Dropout, Flatten, Activati
 from mlfromscratch.deep_learning import NeuralNetwork
 from mlfromscratch.reinforcement_learning import DeepQNetwork
 
+"""
+This file is used to verify learning occurs when using another
+Python library calls the Python environment. Other popular library
+that follows a similar design is TensorFlow.
+"""
 
 def main():
     dqn = DeepQNetwork(env_name='TAIL-v1',

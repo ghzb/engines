@@ -1,15 +1,21 @@
 package test.optimization;
 
+import optimization.PythonOptimizationEngine;
 import optimization.PythonOptimizationEngineOld;
+import optimization.PythonRunner;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import state.StateSpaceManager;
+import test.state.ActionEnumerationTest;
 import test.state.PythonActionTest;
 import test.state.PythonStateTest;
+import test.state.StateEnumerationTest;
 
-import java.io.File;
+import java.io.*;
 import java.nio.file.Files;
+
+import static org.junit.Assert.*;
 
 /**
  *
@@ -43,16 +49,61 @@ public class PythonOptimizationEngineTest {
     public void tearDown(){
     }
 
-    @Test
-    public void qLearningEngine()
+    private void registerActionsAndStates()
     {
+        manager.registerActionEnumeration(ActionEnumerationTest.Action1.ONE);
+        manager.registerActionEnumeration(ActionEnumerationTest.Action2.TWO);
+        manager.registerStateEnumeration(StateEnumerationTest.COMBAT_POWER.BETTER);
+    }
+
+    @Test
+    public void pythonOptimizationEngine()
+    {
+        System.out.println("pythonOptimizationEngine");
+        PythonOptimizationEngine instance1 = new PythonOptimizationEngine(folder, py, python);
+        registerActionsAndStates();
     }
 
     /**
      * Ensure selectNextState is random.
      */
     @Test
-    public void selectNextState() {
+    public void selectNextState() throws InterruptedException, IOException {
+//        System.out.println("selectNextState");
+//        PythonOptimizationEngine instance = new PythonOptimizationEngine(folder, py, python);
+//        registerActionsAndStates();
+//        Thread mainRunner = new Thread(()->{
+//            instance.selectNextState();
+//            System.out.println("after seelect next state");
+//        });
+//        mainRunner.setName("TAIL_MAIN_RUNNER");
+//        mainRunner.start();
+//
+//        Thread.sleep(5000);
+//        System.out.println(String.format("%b, %b", mainRunner.isDaemon(), mainRunner.isAlive()));
+//        assertSame(Thread.State.RUNNABLE, mainRunner.getState());
+////        mainRunner.d
+//        mainRunner.interrupt();
+//
+////        Thread mainRunner = new Thread(()->{
+////            PythonRunner p = new PythonRunner(python, new File("test/python/Test_Infinite.py"));
+////            p.run();
+////            System.out.println("after seelect next state");
+////        });
+////        mainRunner.start();
+////
+////        Thread.sleep(5000);
+
+        ProcessBuilder builder = new ProcessBuilder();
+        builder.inheritIO();
+        builder.command(
+                new File("IPC/runner.sh").getAbsolutePath(),
+                new File("test/python/venv/bin/python3").getAbsolutePath(),
+                new File("test/python/.__TAIL_runner__.py").getAbsolutePath()
+        );
+        Process p = builder.start();
+        Thread.sleep(5000);
+
     }
 
     @Test

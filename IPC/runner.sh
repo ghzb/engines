@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
-which python
+#trap 'echo "Be patient"' INT
+command -v python
 /usr/bin/env pip3 list | grep gym
-$1 $2
+$1 "$2"

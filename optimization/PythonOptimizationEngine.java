@@ -18,62 +18,117 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class PythonOptimizationEngine implements OptimizationEngine {
-    protected transient static Logger LOGGER = Logger.getLogger(PythonOptimizationEngineOld.class);
+    protected transient static Logger LOGGER = Logger.getLogger(ValueIterationEngine.class);
 
-    private final StateActionCache cache;
-    private final ConcurrentLinkedQueue<SocketData> pythonActionQueue;
-    private final AtomicBoolean finished;
-    private final Helpers.VisitedStatesTracker visits;
-    private final Helpers.QTable qTable;
-    private final Helpers.HistoryTable history;
-    private final PythonRunner pythonProcess;
-    private final StateSpaceManager manager;
+    private StateActionCache cache;
+    private ConcurrentLinkedQueue<SocketData> pythonActionQueue;
+    private AtomicBoolean finished;
+    private StateActionCache.VisitedStatesTracker visits;
+    private QTable qTable;
+    private HistoryTable history;
+    private PythonRunner pythonProcess;
+    private StateSpaceManager manager;
 
-    private File saveFolder;
+    private SocketWorker worker;
     private int curStateIndex;
     private int curActionIndex;
     private SocketServer server;
+    private boolean ranThroughProcessResultsOnce = false;
+    private int maxVisits;
+    private File pythonPath;
+    private File pythonFile;
+    private File saveLocation;
+    private Boolean startedThreads = false;
 
 
-
-    public PythonOptimizationEngine(File saveFolder, File pythonPath, File pythonFile)
+    /**
+     * Create a new engine instance.
+     * @param saveLocation - where files will be stored.
+     * @param pythonFile - the path of the Python file to run.
+     * @param pythonPath - the path of the Python interpreter.
+     */
+    public PythonOptimizationEngine(File saveLocation, File pythonFile, File pythonPath)
     {
-        this.saveFolder = saveFolder;
-        this.manager = StateSpaceManager.getManager(saveFolder);
-        this.visits = new Helpers.VisitedStatesTracker(manager, manager.getNumberOfActions());
-        this.qTable = new Helpers.QTable(manager, saveFolder);
-        this.history = new Helpers.HistoryTable(saveFolder);
-        this.cache = new StateActionCache();
-        this.pythonActionQueue = new ConcurrentLinkedQueue<SocketData>();
-        this.finished = new AtomicBoolean(false);
+        this.saveLocation = saveLocation;
+        createInstance(pythonFile, pythonPath);
+    }
 
+    /**
+     * Create a new engine instance. Try to use the default Python interpreter for executing Python files.
+     * @param saveLocation - where files will be stored.
+     * @param pythonFile - the path of the Python file to run.
+     */
+    public PythonOptimizationEngine(File saveLocation, File pythonFile)
+    {
+        this.saveLocation = saveLocation;
+        createInstance(pythonFile, null);
+    }
+
+    /**
+     * Initialize variables necessary for engine.
+     * @param pythonFile - the path of the Python file to run.
+     * @param pythonPath - (nullable) the path of the Python interpreter.
+     */
+    private void createInstance(File pythonFile, File pythonPath)
+    {
+        this.pythonPath = pythonPath;
+        this.pythonFile = pythonFile;
+        this.manager = StateSpaceManager.getManager(this.saveLocation);
+        this.maxVisits = 0;
+        this.qTable = new QTable(this.saveLocation);
+        this.history = new HistoryTable(this.saveLocation);
+        this.cache = new StateActionCache();
+        this.pythonActionQueue = new ConcurrentLinkedQueue<>();
+        this.finished = new AtomicBoolean(false);
+        this.curStateIndex = manager.getIDForState(manager.getDefaultState());
+    }
+
+    /**
+     * Start the socket server on port 8888.
+     * Then spawn create and run a TAIL_runner.py file on a separate thread.
+     */
+    private void startSocketServerAndPythonThreads ()
+    {
         initSocketServer();
         this.pythonProcess = new PythonRunner(pythonPath, pythonFile);
         pythonProcess.run();
+        startedThreads = true;
+    }
+
+    /**
+     * Set the maximum visits for each state before force quitting.
+     * @param maxVisits - The maximum number of visits for each state.
+     */
+    public void setMaxVisits(int maxVisits)
+    {
+        this.maxVisits = maxVisits;
+        this.visits = new StateActionCache.VisitedStatesTracker(manager, maxVisits);
     }
 
     /**
      * Determine the next state/action that should be explored
-     *
+     * Reset a boolean that determines if results have already been sent to Python.
      * @return The IDs of the next state and action to explore are returned, respectively
      */
     @Override
     public int[] selectNextState() {
-        System.out.println("waiting for next state");
-        curActionIndex = waitForNextPythonAction();
-        System.out.println("received next state");
-        if (cache.has(curStateIndex, curActionIndex))
+        if (!startedThreads)
         {
-            sendRandomCachedResultToPython();
+            startSocketServerAndPythonThreads();
         }
+        curActionIndex = waitForNextPythonAction();
+
         int[] newState = new int[2];
         newState[ACTION_INDEX] = curActionIndex;
-        newState[STATE_INDEX] = curStateIndex;
+        newState[STATE_INDEX] = getRandomState();
+        ranThroughProcessResultsOnce = false;
         return newState;
     }
 
     /**
      * Store the results of an excursion, performing any necessary housekeeping operations
+     * Stores all results in a cache and only chooses one random result to send to Python.
+     * This single selection allows the Java/Python IPC to stay synchronized.
      *
      * @param oldState    beginning state of the excursion
      * @param action      action taken
@@ -84,6 +139,52 @@ public class PythonOptimizationEngine implements OptimizationEngine {
     @Override
     public void processResults(State oldState, List<ActionEnumeration> action, State newState, double probability, double score) {
         cache.add(curStateIndex, curActionIndex, oldState, action, newState, probability, score);
+        if (!ranThroughProcessResultsOnce) {
+            sendRandomCachedResultToPython();
+            ranThroughProcessResultsOnce = true;
+        }
+//        curStateIndex = getRandomState();
+    }
+
+    /**
+     * A random result is pulled from the cache.
+     * The results are added to the q-table for future policy generation.
+     * The data is structured as JSON for easy reading/parsing and sent off to Python.
+     */
+    private void sendRandomCachedResultToPython()
+    {
+        Result result = cache.chooseOne(curStateIndex, curActionIndex);
+
+        System.out.println(String.format("curState: %d", curStateIndex));
+
+        int oldStateId = manager.getIDForState(result.oldState);
+        int newStateId = manager.getIDForState(result.newState);
+        int actionId   = manager.getIDForActions(result.actions);
+
+        if (maxVisits > 0)
+        {
+            visits.add(newStateId, actionId);
+            if (visits.reachedMax())
+            {
+                finished.set(true);
+            }
+        }
+
+        qTable.put(oldStateId, curActionIndex, result.score);
+        history.add(result);
+
+        curActionIndex = actionId;
+
+        JsonArray obs = new JsonArray();
+        for (StateEnumeration<?> state: result.oldState.getValues()){
+            obs.add(((Number)state.getValueForEnum()).doubleValue());
+        }
+        JsonObject message = new JsonObject();
+        message.add("reward", result.score);
+        message.add("obs", obs);
+        message.add("done", finished.get());
+
+        worker.send("step", message.toString());
     }
 
     /**
@@ -103,6 +204,7 @@ public class PythonOptimizationEngine implements OptimizationEngine {
      */
     @Override
     public void finishOptimization() {
+        finished.set(true);
         pythonProcess.destroy();
         server.destroy();
         System.out.println("TRYING TO FINISH OPTIMIZATION");
@@ -118,12 +220,9 @@ public class PythonOptimizationEngine implements OptimizationEngine {
         LOGGER.fine("ValueIterationEngine progress reset");
         curActionIndex = 0;
         curStateIndex = 0;
-        visits.reset();
         pythonProcess.destroy();
         server.destroy();
-        initSocketServer();
-        pythonProcess.run();
-        server.waitForConnection();
+        startedThreads = false;
     }
 
     /**
@@ -131,7 +230,7 @@ public class PythonOptimizationEngine implements OptimizationEngine {
      * will be called again before the result of the previous run is available. This
      * should be false if the engine uses the results of a run to select the next state.
      *
-     * @return
+     * @return whether excursions can run in parallel.
      */
     @Override
     public boolean requiresFixedExcursionOrdering() {
@@ -139,7 +238,8 @@ public class PythonOptimizationEngine implements OptimizationEngine {
     }
 
     /**
-     * Retrieve the optimal policy
+     * Retrieve the optimal policy.
+     * From the Q-table.
      *
      * @return A mapping from every state to its optimal action and expected utility is returned
      */
@@ -147,7 +247,7 @@ public class PythonOptimizationEngine implements OptimizationEngine {
     public Map<Integer, Map<Integer, Double>> getResults() {
         if (!finished.get())
         {
-            throw new Helpers.PrematureInvocationException();
+            throw new Exceptions.PrematureInvocationException();
         }
         return qTable.getOptimalPolicy();
     }
@@ -159,9 +259,21 @@ public class PythonOptimizationEngine implements OptimizationEngine {
      */
     @Override
     public void setSaveLocation(File saveLocation) {
-        saveFolder = saveLocation;
+        this.saveLocation = saveLocation;
     }
 
+    /**
+     * @return the index of a random state.
+     */
+    private int getRandomState()
+    {
+        Random rand = new Random();
+        return rand.nextInt(manager.getNumberOfStates());
+    }
+
+    /**
+     * Establish a new socket server and add event listeners for channels.
+     */
     private void initSocketServer()
     {
         server = new SocketServer();
@@ -185,7 +297,7 @@ public class PythonOptimizationEngine implements OptimizationEngine {
     }
 
     /**
-     * Fatal error tracebacks in Python are sent to this channel.
+     * Fatal error trace-backs in Python are sent to this channel.
      * @param socket data received from the socket
      */
     private void onSocketChannel__$ISSUE(SocketData socket)
@@ -210,15 +322,14 @@ public class PythonOptimizationEngine implements OptimizationEngine {
      */
     private void onSocketChannel__$CONNECT(SocketData socket)
     {
+        worker = socket.worker;
         JsonObject json = Json.object();
         json.add("num_of_states", manager.getNumberOfStates());
         json.add("num_of_actions", manager.getNumberOfActions());
         json.add("shape_of_states", manager.getPossibleStates().size());
-        json.add("shape_of_actions", getShapeOfActions());
         json.add("state_bounds", convertToJsonArray(getStateBounds()));
 
-        socket.worker.send("state_space", json.toString());
-        System.out.println(String.format("Sending connection data: %s", json));
+        worker.send("state_space", json.toString());
     }
 
 
@@ -238,7 +349,7 @@ public class PythonOptimizationEngine implements OptimizationEngine {
      */
     private void onSocketChannel__debug(SocketData socket)
     {
-        System.out.println("\t\t" + socket.message);
+//        System.out.println("\t\t" + socket.message);
     }
 
     /**
@@ -247,7 +358,6 @@ public class PythonOptimizationEngine implements OptimizationEngine {
      */
     private void onSocketChannel__step(SocketData socket)
     {
-        System.out.println(String.format("received action: %s", socket.message));
         pythonActionQueue.add(socket);
     }
 
@@ -269,22 +379,10 @@ public class PythonOptimizationEngine implements OptimizationEngine {
     }
 
     /**
-     * Generates a "shape" from actions. Each registered action will add to the shape.
-     * 2 registered actions may return (3,3) == int[3][3]
-     * 3 registered actions may return (3,4,3) == int[3][4][3]
-     * @return JsonArray for sending accross socket
+     * Convert a list of any type to JSON.
+     * @param list - A list of anything.
+     * @return JsonArray
      */
-    private JsonArray getShapeOfActions()
-    {
-        JsonArray shape_of_actions = new JsonArray();
-        for(ActionEnumeration action : manager.getPossibleActions())
-        {
-            int size = action.getClass().getEnumConstants().length;
-            shape_of_actions.add(size);
-        }
-        return shape_of_actions;
-    }
-
     private JsonArray convertToJsonArray(List<?> list)
     {
         JsonArray json = new JsonArray();
@@ -341,33 +439,5 @@ public class PythonOptimizationEngine implements OptimizationEngine {
         } while (socket == null);
         return Integer.parseInt(socket.message);
     }
-
-    private void sendRandomCachedResultToPython()
-    {
-        StateActionCache.Result result = cache.chooseOne(curStateIndex, curActionIndex);
-
-        visits.add(result.newState);
-        if (visits.reachedMax())
-        {
-            finished.set(true);
-        }
-
-        int oldStateId = manager.getIDForState(result.oldState);
-        int newStateId = manager.getIDForState(result.newState);
-        int actionId   = manager.getIDForActions(result.actions);
-        qTable.put(oldStateId, curActionIndex, result.score);
-        curActionIndex = actionId;
-        history.add(result);
-
-        JsonArray obs = new JsonArray();
-        for (StateEnumeration<?> state: result.newState.getValues()){
-            obs.add(((Number)state.getValueForEnum()).doubleValue());
-        }
-        JsonObject message = new JsonObject();
-        message.add("reward", result.score);
-        message.add("obs", obs);
-        message.add("done", finished.get());
-    }
-
 
 }

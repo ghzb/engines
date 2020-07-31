@@ -3,14 +3,10 @@ package optimization;
 import com.sun.istack.logging.Logger;
 import state.ActionEnumeration;
 import state.State;
-import state.StateEnumeration;
 import state.StateSpaceManager;
 
 import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  *
@@ -92,12 +88,12 @@ public class QLearningEngine implements OptimizationEngine {
     /**
      * The Q-Table. Used to store state-action pairs.
      */
-    private Map<Integer, Map<Integer, Double>> qTable;
+    private QTable qTable;
 
     /**
      * List to keep track of transition history.
      */
-    private List<List<Number>> history = new ArrayList<>();
+    private HistoryTable history;
 
     /**
      * Reference to current StateSpaceManager.
@@ -166,7 +162,7 @@ public class QLearningEngine implements OptimizationEngine {
         {
             return getRandomAction();
         } else {
-            return getBestAction(qTable.get(currentStateId));
+            return getBestAction(qTable.getActions(currentStateId));
         }
     }
 
@@ -191,85 +187,6 @@ public class QLearningEngine implements OptimizationEngine {
             currentStep = 0;
             currentEpisode++;
             currentStateId = getRandomState();
-        }
-    }
-
-    /**
-     * Write the current qTable to qtable.csv.
-     */
-    private void writeQTable()
-    {
-        try {
-
-            int i = 0;
-            List<StateEnumeration> stateOrder =  manager.getStateEnumOrder();
-            List<List<String>> possibleStates = new ArrayList<>();
-            for (;i < stateOrder.size(); i++)
-            {
-                Enum<?> e = (Enum<?>)stateOrder.get(i);
-                Class<?> eClass = e.getDeclaringClass();
-                List<String> space = Arrays.stream(eClass.getEnumConstants()).map(String::valueOf).collect(Collectors.toList());
-                possibleStates.add(space);
-            }
-
-            List<List<String>> stateNames = Cartesian.productFrom(possibleStates);
-
-
-            List<ActionEnumeration> actionOrder =  manager.getPossibleActions();
-            List<List<String>> possibleActions = new ArrayList<>();
-            for (;i - stateOrder.size() < actionOrder.size(); i++)
-            {
-                Enum<?> e = (Enum<?>)actionOrder.get(i - stateOrder.size());
-                Class<?> eClass = e.getDeclaringClass();
-                List<String> space = Arrays.stream(eClass.getEnumConstants()).map(String::valueOf).collect(Collectors.toList());
-                possibleActions.add(space);
-            }
-
-            List<List<String>> actionNames = Cartesian.productFrom(possibleActions);
-
-
-            FileWriter writer = new FileWriter(new File(saveFolder, "qtable.csv"));
-            writer.write("State/Action,");
-            for (int actionId = 0; actionId < manager.getNumberOfActions(); actionId++)
-            {
-                String colHeading = String.join("/", actionNames.get(actionId));
-                writer.write(String.format("%s,", colHeading));
-            }
-            writer.write(System.lineSeparator());
-            for (int stateId = 0; stateId < manager.getNumberOfStates(); stateId ++) {
-                String rowHeading = String.join("/", stateNames.get(stateId));
-                writer.write(String.format("%s,", rowHeading));
-                for (int actionId = 0; actionId < manager.getNumberOfActions(); actionId++)
-                {
-                    writer.write(String.format("%f,", qTable.get(stateId).get(actionId)));
-                }
-                writer.write(System.lineSeparator());
-            }
-            writer.close();
-        } catch (IOException err)
-        {
-            LOGGER.severe("Unable to write qtable", err);
-        }
-
-    }
-
-    /**
-     * Write the current history to history.csv.
-     */
-    private void writeHistory()
-    {
-        try {
-            FileWriter writer = new FileWriter(new File(saveFolder, "history.csv"));
-            writer.write("State,Action,New State,Probability,Reward");
-            for(List<Number> moment: history){
-                String row = moment.stream().map(String::valueOf).collect(Collectors.joining(","));
-                writer.write(System.lineSeparator());
-                writer.write(row);
-            }
-            writer.close();
-        } catch (IOException err)
-        {
-            LOGGER.severe("Unable to write history", err);
         }
     }
 
@@ -376,7 +293,7 @@ public class QLearningEngine implements OptimizationEngine {
     @Override
     public int[] selectNextState() {
         if (qTable == null) {
-            qTable = createQTable(manager.getNumberOfStates(), manager.getNumberOfActions());
+            qTable = new QTable(saveFolder);
         }
         setCurrentIteration();
         int[] step = new int[2];
@@ -396,24 +313,25 @@ public class QLearningEngine implements OptimizationEngine {
      */
     @Override
     public void processResults(State oldState, List<ActionEnumeration> action, State newState, double probability, double score) {
+        Result result = new Result(oldState, action, newState, probability, score);
         LOGGER.fine("Updating Q-Table value");
         int oldStateId = manager.getIDForState(oldState);
         int newStateId = manager.getIDForState(newState);
         int actionId   = manager.getIDForActions(action);
 
         if (qTable == null) {
-            qTable = createQTable(manager.getNumberOfStates(), manager.getNumberOfActions());
+            qTable = new QTable(saveFolder);
         }
 
-        double q1 = qTable.get(oldStateId).get(currentActionId);
-        double q2 = qTable.get(newStateId).get(actionId);
+        double q1 = qTable.getActions(oldStateId).get(currentActionId);
+        double q2 = qTable.getActions(newStateId).get(actionId);
         double v  = q1 + alpha * (score + gamma * q2 - q1);
 
-        qTable.get(oldStateId).put(currentActionId, v);
+        qTable.put(oldStateId, currentActionId, v);
 
         currentActionId = actionId;
 
-        history.add(Arrays.asList(oldStateId, actionId, newStateId, probability, score));
+        history.add(result);
     }
 
     /**
@@ -431,8 +349,8 @@ public class QLearningEngine implements OptimizationEngine {
     @Override
     public void finishOptimization() {
         isForceQuitting = true;
-        writeQTable();
-        writeHistory();
+        qTable.writeToFile();
+        history.writeToFile();
     }
 
     /**
@@ -464,16 +382,9 @@ public class QLearningEngine implements OptimizationEngine {
     public Map<Integer, Map<Integer, Double>> getResults() {
         if (isIterating())
         {
-            throw new QLearningEngine.PrematureInvocationException();
+            throw new Exceptions.PrematureInvocationException();
         }
-        Map<Integer, Map<Integer, Double>> optimalPolicy = new HashMap<>();
-        for(int i=0; i<qTable.size(); i++)
-        {
-            int bestActionId = getBestAction(qTable.get(i));
-            Double bestActionValue = qTable.get(i).get(bestActionId);
-            optimalPolicy.put(i, Map.ofEntries(Map.entry(bestActionId, bestActionValue)));
-        }
-        return optimalPolicy;
+        return qTable.getOptimalPolicy();
     }
 
     /**
