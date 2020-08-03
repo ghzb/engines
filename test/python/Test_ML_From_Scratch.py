@@ -9,9 +9,15 @@ from mlfromscratch.deep_learning import NeuralNetwork
 from mlfromscratch.reinforcement_learning import DeepQNetwork
 
 """
+The script originates from https://github.com/CoderJolly/ML-From-Scratch/blob/master/mlfromscratch/examples/deep_q_network.py
+
 This file is used to verify learning occurs when using another
 Python library calls the Python environment. Other popular library
 that follows a similar design is TensorFlow.
+
+This script does not appear to solve for an optimal policy and should
+only be used for testing purposes until more research is done. Please
+refer to this repo for documentation. https://github.com/CoderJolly/ML-From-Scratch
 """
 
 def main():

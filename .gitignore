@@ -12,6 +12,7 @@
 !optimization/*
 !test/functional/*
 !test/optimization/*
+!README.md
 
 #ignore folders that got through.
 .idea/*
