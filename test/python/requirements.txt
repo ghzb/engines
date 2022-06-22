@@ -8,7 +8,7 @@ joblib==0.16.0
 kiwisolver==1.2.0
 matplotlib==3.2.2
 -e git+https://github.com/eriklindernoren/ML-From-Scratch.git@a2806c6732eee8d27762edd6d864e0c179d8e9e8#egg=mlfromscratch
-numpy==1.19.0
+numpy==1.22.0
 pandas==1.0.5
 progressbar33==2.4
 pyglet==1.5.0
